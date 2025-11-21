@@ -39,7 +39,7 @@ data "coder_parameter" "image_registry" {
   display_name = "Image Registry"
   description  = "GitHub Container Registry username or org"
   type         = "string"
-  default      = "selkies-project"
+  default      = "poberdorfer"
   icon         = "/icon/docker.svg"
   mutable      = true
   order        = 1
@@ -323,6 +323,68 @@ data "coder_parameter" "timezone" {
 }
 
 # ============================================================================
+# WEBRTC / TURN CONFIGURATION
+# ============================================================================
+#
+# For WebRTC to work from external clients, Selkies needs STUN/TURN servers
+# to handle NAT traversal. See docs/WEBRTC-SETUP.md for complete guide.
+
+data "coder_parameter" "turn_server_ip" {
+  name         = "turn_server_ip"
+  display_name = "TURN Server IP"
+  description  = "External IP of TURN server (STUNner LoadBalancer IP). Leave empty to disable TURN."
+  type         = "string"
+  default      = ""
+  icon         = "/icon/globe.svg"
+  mutable      = true
+  order        = 60
+}
+
+data "coder_parameter" "turn_server_port" {
+  name         = "turn_server_port"
+  display_name = "TURN Server Port"
+  description  = "TURN server port (usually 3478)"
+  type         = "number"
+  default      = 3478
+  icon         = "/icon/globe.svg"
+  mutable      = true
+  order        = 61
+}
+
+data "coder_parameter" "turn_username" {
+  name         = "turn_username"
+  display_name = "TURN Username"
+  description  = "TURN authentication username (from stunner-auth-secret)"
+  type         = "string"
+  default      = ""
+  icon         = "/icon/key.svg"
+  mutable      = true
+  order        = 62
+}
+
+data "coder_parameter" "turn_password" {
+  name         = "turn_password"
+  display_name = "TURN Password"
+  description  = "TURN authentication password (from stunner-auth-secret)"
+  type         = "string"
+  default      = ""
+  icon         = "/icon/key.svg"
+  mutable      = true
+  order        = 63
+}
+
+data "coder_parameter" "stun_server" {
+  name         = "stun_server"
+  display_name = "STUN Server"
+  description  = "STUN server for ICE candidate discovery"
+  type         = "string"
+  default      = "stun.l.google.com:19302"
+  icon         = "/icon/globe.svg"
+  mutable      = true
+  order        = 64
+}
+
+# ============================================================================
 # CODER AGENT
 # ============================================================================
 
@@ -588,6 +650,59 @@ resource "kubernetes_pod" "main" {
       env {
         name  = "SELKIES_METRICS_PORT"
         value = "9090"
+      }
+
+      # Environment variables - WebRTC / TURN configuration
+      # Only set if TURN server is configured
+      dynamic "env" {
+        for_each = data.coder_parameter.turn_server_ip.value != "" ? [1] : []
+        content {
+          name  = "SELKIES_TURN_HOST"
+          value = data.coder_parameter.turn_server_ip.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = data.coder_parameter.turn_server_ip.value != "" ? [1] : []
+        content {
+          name  = "SELKIES_TURN_PORT"
+          value = tostring(data.coder_parameter.turn_server_port.value)
+        }
+      }
+
+      dynamic "env" {
+        for_each = data.coder_parameter.turn_server_ip.value != "" ? [1] : []
+        content {
+          name  = "SELKIES_TURN_PROTOCOL"
+          value = "udp"
+        }
+      }
+
+      dynamic "env" {
+        for_each = data.coder_parameter.turn_username.value != "" ? [1] : []
+        content {
+          name  = "SELKIES_TURN_USERNAME"
+          value = data.coder_parameter.turn_username.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = data.coder_parameter.turn_password.value != "" ? [1] : []
+        content {
+          name  = "SELKIES_TURN_PASSWORD"
+          value = data.coder_parameter.turn_password.value
+        }
+      }
+
+      # Always set STUN server (works without credentials)
+      env {
+        name  = "SELKIES_STUN_HOST"
+        value = split(":", data.coder_parameter.stun_server.value)[0]
+      }
+
+      env {
+        name  = "SELKIES_STUN_PORT"
+        value = length(split(":", data.coder_parameter.stun_server.value)) > 1 ? split(":", data.coder_parameter.stun_server.value)[1] : "19302"
       }
 
       # Resources
