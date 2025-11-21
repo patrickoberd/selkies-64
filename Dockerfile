@@ -259,11 +259,9 @@ RUN mkdir -p /var/run/user/${USER_ID} \
     && chown -R ${USERNAME}:${USERNAME} /var/run/user/${USER_ID} \
     && chmod 700 /var/run/user/${USER_ID}
 
-# Copy configuration files
+# Copy configuration files (static configs - rarely changed)
 COPY --chown=${USERNAME}:${USERNAME} build/desktop-configs/xfce4/ /home/${USERNAME}/.config/xfce4/
 COPY --chown=${USERNAME}:${USERNAME} build/pulse-config/ /home/${USERNAME}/.config/pulse/
-COPY --chown=${USERNAME}:${USERNAME} scripts/ /opt/scripts/
-RUN chmod +x /opt/scripts/*.sh
 
 # Set up supervisord configuration
 COPY build/supervisor/ /etc/supervisor/conf.d/
@@ -298,6 +296,11 @@ WORKDIR /home/${USERNAME}
 # 8082: Selkies control plane API (internal)
 # 9081: Prometheus metrics (optional)
 EXPOSE 8080 8081 8082 9081
+
+# Copy scripts LAST (frequently changed during development)
+# This ensures Docker cache is only invalidated for the final layers
+COPY --chown=${USERNAME}:${USERNAME} scripts/ /opt/scripts/
+RUN chmod +x /opt/scripts/*.sh
 
 # Entry point
 ENTRYPOINT ["/opt/scripts/entrypoint.sh"]
