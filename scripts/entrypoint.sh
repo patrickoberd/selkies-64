@@ -11,8 +11,13 @@ echo "=========================================="
 # Enable TCP MTU probing to handle MTU 1450 overlay network
 # This prevents WebSocket packet fragmentation and retransmissions
 echo "Enabling TCP MTU probing..."
-echo 1 > /proc/sys/net/ipv4/tcp_mtu_probing
-echo "✓ TCP MTU probing enabled"
+if echo 1 > /proc/sys/net/ipv4/tcp_mtu_probing 2>/dev/null; then
+    echo "✓ TCP MTU probing enabled"
+else
+    echo "⚠ WARNING: Could not enable TCP MTU probing (read-only filesystem)"
+    echo "  This may cause WebSocket issues on MTU 1450 networks"
+    echo "  Consider adding securityContext.sysctls to pod spec"
+fi
 
 # Function to wait for a service
 wait_for_service() {
