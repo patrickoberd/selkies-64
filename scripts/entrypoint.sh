@@ -8,6 +8,12 @@ echo "=========================================="
 echo "Selkies Desktop Environment Initialization"
 echo "=========================================="
 
+# Enable TCP MTU probing to handle MTU 1450 overlay network
+# This prevents WebSocket packet fragmentation and retransmissions
+echo "Enabling TCP MTU probing..."
+echo 1 > /proc/sys/net/ipv4/tcp_mtu_probing
+echo "✓ TCP MTU probing enabled"
+
 # Function to wait for a service
 wait_for_service() {
     local service=$1
