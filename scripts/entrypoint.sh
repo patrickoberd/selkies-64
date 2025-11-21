@@ -230,12 +230,34 @@ echo "NGINX PID: $NGINX_PID"
 # Wait for NGINX to be ready
 wait_for_service "NGINX Web Interface" 8080 30
 
-# If running with Coder agent, start it now
+# If running with Coder agent, download and start it now
 if [ -n "$CODER_AGENT_TOKEN" ]; then
-    echo "Starting Coder agent..."
+    echo "==========================================  "
+    echo "Starting Coder Agent Integration"
+    echo "=========================================="
+
+    # Execute init script to set environment variables
     if [ -n "$CODER_AGENT_INIT_SCRIPT" ]; then
         eval "$CODER_AGENT_INIT_SCRIPT"
     fi
+
+    # Download Coder agent binary
+    echo "Downloading Coder agent from: $CODER_AGENT_URL"
+    if curl -fsSL "$CODER_AGENT_URL/bin/coder-linux-$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')" -o /tmp/coder; then
+        chmod +x /tmp/coder
+        echo "✓ Coder agent downloaded successfully"
+
+        # Start Coder agent in background as subprocess
+        /tmp/coder agent &
+        CODER_PID=$!
+        echo "✓ Coder agent started (PID: $CODER_PID)"
+        echo "  Connecting to: $CODER_AGENT_URL"
+    else
+        echo "⚠ Failed to download Coder agent from $CODER_AGENT_URL"
+        echo "  Continuing without Coder integration..."
+    fi
+else
+    echo "Running in standalone mode (no Coder integration)"
 fi
 
 echo ""
@@ -257,6 +279,12 @@ echo "Container is running. Press Ctrl+C to stop..."
 # Set up signal handlers for graceful shutdown
 cleanup() {
     echo "Shutting down services..."
+
+    # Kill Coder agent
+    if [ -n "$CODER_PID" ]; then
+        echo "Stopping Coder agent..."
+        kill $CODER_PID 2>/dev/null || true
+    fi
 
     # Kill NGINX
     if [ -n "$NGINX_PID" ]; then
