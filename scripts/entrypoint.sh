@@ -84,14 +84,21 @@ if [ $? -ne 0 ]; then
 fi
 echo "✓ X11 server is running on $DISPLAY"
 
+# Create PulseAudio directories
+mkdir -p "$PULSE_RUNTIME_PATH"
+mkdir -p ~/.config/pulse
+
 # Start PulseAudio
 echo "Starting PulseAudio..."
-pulseaudio --start --log-target=journal
-sleep 1
-if pulseaudio --check; then
+pulseaudio -D --exit-idle-time=-1 --log-level=info 2>&1 | tee /tmp/pulseaudio.log &
+sleep 2
+
+# Check PulseAudio
+if pactl info >/dev/null 2>&1; then
     echo "✓ PulseAudio is running"
 else
     echo "WARNING: PulseAudio failed to start, audio will not be available"
+    echo "Check /tmp/pulseaudio.log for details"
 fi
 
 # Start XFCE desktop environment
@@ -137,18 +144,62 @@ export SELKIES_AUDIO_BITRATE=${SELKIES_AUDIO_BITRATE:-128000}
 # Configure framerate
 export SELKIES_FRAMERATE=${SELKIES_FRAMERATE:-30}
 
-# Start Selkies web server
-cd /opt/selkies-gstreamer
-python3 -m selkies_gstreamer.web \
-    --port=$SELKIES_PORT \
-    --metrics_port=$SELKIES_METRICS_PORT \
-    --enable_audio=$SELKIES_ENABLE_AUDIO \
-    --enable_resize=$SELKIES_ENABLE_RESIZE &
+# Verify Selkies is installed (check Python module)
+if ! python3 -c "import selkies_gstreamer" 2>/dev/null; then
+    echo "ERROR: selkies_gstreamer module not found!"
+    echo "Available Python packages:"
+    pip3 list | grep -i selkies
+    echo "Python path:"
+    python3 -c "import sys; print('\\n'.join(sys.path))"
+    exit 1
+fi
+echo "✓ selkies_gstreamer Python module found"
+
+# Start Selkies signaling server (internal port 8081)
+echo "Starting Selkies signaling server on port 8081..."
+
+# Source GStreamer environment (sets GST_PLUGIN_PATH, LD_LIBRARY_PATH, etc.)
+if [ -f /opt/gstreamer/gst-env ]; then
+    source /opt/gstreamer/gst-env
+    echo "✓ GStreamer environment sourced from /opt/gstreamer/gst-env"
+    echo "  GST_PLUGIN_PATH: $GST_PLUGIN_PATH"
+else
+    echo "WARNING: /opt/gstreamer/gst-env not found - GStreamer plugins may not load!"
+fi
+
+# Verify selkies-gstreamer binary exists
+if ! command -v selkies-gstreamer >/dev/null 2>&1; then
+    echo "ERROR: selkies-gstreamer binary not found in PATH!"
+    echo "Available Python packages:"
+    pip3 list | grep -i selkies
+    exit 1
+fi
+
+# Start Selkies with proper binary and flags
+export SELKIES_PORT=8081
+export SELKIES_CONTROL_PORT=8082
+selkies-gstreamer \
+    --addr="localhost" \
+    --port="8081" \
+    --enable_basic_auth="false" \
+    --enable_metrics_http="true" \
+    --metrics_http_port="9081" \
+    2>&1 | tee /tmp/selkies.log &
 
 SELKIES_PID=$!
+echo "Selkies PID: $SELKIES_PID"
 
-# Wait for Selkies to be ready
-wait_for_service "Selkies Web Interface" $SELKIES_PORT 60
+# Wait for Selkies signaling server to be ready (port 8081)
+wait_for_service "Selkies Signaling Server" 8081 60
+
+# Start NGINX (serves web interface on port 8080 and proxies to Selkies on 8081)
+echo "Starting NGINX web server on port 8080..."
+sudo /usr/sbin/nginx -g "daemon off;" 2>&1 | tee /tmp/nginx.log &
+NGINX_PID=$!
+echo "NGINX PID: $NGINX_PID"
+
+# Wait for NGINX to be ready
+wait_for_service "NGINX Web Interface" 8080 30
 
 # If running with Coder agent, start it now
 if [ -n "$CODER_AGENT_TOKEN" ]; then
@@ -162,11 +213,12 @@ echo ""
 echo "=========================================="
 echo "✓ Selkies Desktop Environment is Ready!"
 echo "=========================================="
-echo "Access the desktop at: http://localhost:$SELKIES_PORT"
+echo "Access the desktop at: http://localhost:8080"
 echo "Display: $DISPLAY @ $RESOLUTION"
 echo "Video Encoder: $SELKIES_ENCODER"
 echo "Video Bitrate: $(($SELKIES_VIDEO_BITRATE / 1000000)) Mbps"
 echo "Audio Enabled: $SELKIES_ENABLE_AUDIO"
+echo "Architecture: NGINX (8080) → Selkies (8081)"
 echo "=========================================="
 echo ""
 
@@ -177,20 +229,30 @@ echo "Container is running. Press Ctrl+C to stop..."
 cleanup() {
     echo "Shutting down services..."
 
+    # Kill NGINX
+    if [ -n "$NGINX_PID" ]; then
+        echo "Stopping NGINX..."
+        kill $NGINX_PID 2>/dev/null || true
+    fi
+
     # Kill Selkies
     if [ -n "$SELKIES_PID" ]; then
+        echo "Stopping Selkies..."
         kill $SELKIES_PID 2>/dev/null || true
     fi
 
     # Kill XFCE
     if [ -n "$XFCE_PID" ]; then
+        echo "Stopping XFCE..."
         kill $XFCE_PID 2>/dev/null || true
     fi
 
     # Stop PulseAudio
+    echo "Stopping PulseAudio..."
     pulseaudio --kill 2>/dev/null || true
 
     # Kill X server
+    echo "Stopping X server..."
     pkill -f "Xvfb $DISPLAY" 2>/dev/null || true
 
     echo "Shutdown complete"

@@ -45,7 +45,12 @@ RUN apt-get update && apt-get install -y \
     dbus-x11 \
     # Audio support
     pulseaudio \
+    pulseaudio-utils \
     pavucontrol \
+    alsa-utils \
+    # System services
+    policykit-1 \
+    xdg-user-dirs \
     # Clean up
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -90,7 +95,12 @@ RUN apt-get update && apt-get install -y \
     thunar-volman \
     # Window manager
     xfwm4 \
-    xfwm4-themes \
+    # Themes
+    arc-theme \
+    papirus-icon-theme \
+    # Clipboard support
+    xclip \
+    xsel \
     # Clean up
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -139,73 +149,100 @@ RUN apt-get update && apt-get install -y \
 # ============================================================================
 FROM gstreamer AS selkies
 
-# Install Python dependencies for Selkies
-RUN pip3 install --no-cache-dir \
-    # Web framework
-    aiohttp \
-    aiortc \
-    # WebRTC signaling
-    websockets \
-    msgpack \
-    # Monitoring and logging
-    prometheus_client \
-    structlog \
-    # Utilities
-    pyyaml \
-    Jinja2 \
-    watchdog
-
-# Clone and install Selkies-gstreamer
-# Using a specific version for reproducibility
-ARG SELKIES_VERSION=v1.6.0
+# Install Selkies-gstreamer from official releases (not from source!)
+# This provides the proper selkies-gstreamer binary and pre-compiled plugins
 WORKDIR /opt
-RUN git clone --depth 1 --branch ${SELKIES_VERSION} \
-    https://github.com/selkies-project/selkies-gstreamer.git \
-    && cd selkies-gstreamer \
-    && pip3 install -e .
+RUN echo "=== Installing Selkies from Official Releases ===" && \
+    SELKIES_VERSION=$(curl -fsSL https://api.github.com/repos/selkies-project/selkies-gstreamer/releases/latest | grep -Po '"tag_name": "v\K[^"]*') && \
+    echo "Selkies version: ${SELKIES_VERSION}" && \
+    \
+    # 1. Install Python package (wheel) - provides selkies-gstreamer binary
+    echo "Downloading Python wheel..." && \
+    cd /tmp && \
+    curl -O -fsSL "https://github.com/selkies-project/selkies-gstreamer/releases/download/v${SELKIES_VERSION}/selkies_gstreamer-${SELKIES_VERSION}-py3-none-any.whl" && \
+    pip3 install --no-cache-dir --force-reinstall \
+        "selkies_gstreamer-${SELKIES_VERSION}-py3-none-any.whl" \
+        "websockets<14.0" && \
+    rm "selkies_gstreamer-${SELKIES_VERSION}-py3-none-any.whl" && \
+    echo "✓ Python package installed" && \
+    \
+    # 2. Install pre-compiled GStreamer plugins (CRITICAL for WebRTC!)
+    echo "Downloading GStreamer plugins..." && \
+    cd /opt && \
+    curl -fsSL "https://github.com/selkies-project/selkies-gstreamer/releases/download/v${SELKIES_VERSION}/gstreamer-selkies_gpl_v${SELKIES_VERSION}_ubuntu22.04_amd64.tar.gz" | tar -xzf - && \
+    echo "✓ GStreamer plugins extracted to /opt/gstreamer/" && \
+    ls -la /opt/gstreamer/ && \
+    \
+    # 3. Download web interface files (HTML/CSS/JS for browser client)
+    echo "Downloading web interface..." && \
+    cd /opt && \
+    curl -fsSL "https://github.com/selkies-project/selkies-gstreamer/releases/download/v${SELKIES_VERSION}/selkies-gstreamer-web_v${SELKIES_VERSION}.tar.gz" | tar -xzf - && \
+    echo "✓ Web interface extracted to /opt/gst-web/" && \
+    ls -la /opt/gst-web/ && \
+    \
+    # 4. Verify selkies-gstreamer binary is available
+    which selkies-gstreamer && \
+    echo "✓ selkies-gstreamer binary found" && \
+    \
+    echo "=== Selkies Installation Complete ==="
 
-# Copy Selkies web assets
-RUN cp -r /opt/selkies-gstreamer/addons/web /opt/selkies-web
-
-# ============================================================================
-# Stage 5: Development Tools
-# ============================================================================
-FROM selkies AS development
-
-# Install common development tools
+# Install NGINX for serving static files and proxying WebSocket connections
 RUN apt-get update && apt-get install -y \
-    # Editors
-    vim \
-    nano \
-    # Version control
-    git \
-    git-lfs \
-    # Development languages and tools
-    nodejs \
-    npm \
-    golang-go \
-    rustc \
-    cargo \
-    # Container tools
-    docker.io \
-    kubectl \
-    # Browsers
-    firefox \
-    chromium-browser \
-    # File manager
-    pcmanfm \
-    # Archive tools
-    zip \
-    unzip \
-    tar \
-    # Clean up
+    nginx \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy NGINX configuration for Selkies
+COPY build/nginx/default.conf /etc/nginx/sites-available/default
+
+# ============================================================================
+# Stage 5: Development Tools (OPTIONAL - Commented out for faster testing)
+# ============================================================================
+# Uncomment the section below if you need development tools
+# This adds ~8-12 minutes to build time
+
+# FROM selkies AS development
+#
+# # Install common development tools
+# RUN apt-get update && apt-get install -y \
+#     # Editors
+#     vim \
+#     nano \
+#     # Version control
+#     git \
+#     git-lfs \
+#     # Development languages and tools
+#     nodejs \
+#     npm \
+#     golang-go \
+#     rustc \
+#     cargo \
+#     # Container tools
+#     docker.io \
+#     # Browsers
+#     firefox \
+#     chromium-browser \
+#     # File manager
+#     pcmanfm \
+#     # Archive tools
+#     zip \
+#     unzip \
+#     tar \
+#     # Clean up
+#     && apt-get clean \
+#     && rm -rf /var/lib/apt/lists/*
+#
+# # Install kubectl (Kubernetes CLI)
+# RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+#     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
+#     && rm kubectl
 
 # ============================================================================
 # Stage 6: User Configuration
 # ============================================================================
-FROM development AS final
+# Build from 'selkies' for minimal test build
+# Change to 'development' if you uncommented the dev tools stage above
+FROM selkies AS final
 
 # Create non-root user
 ARG USER_ID=1000
@@ -224,6 +261,7 @@ RUN mkdir -p /var/run/user/${USER_ID} \
 
 # Copy configuration files
 COPY --chown=${USERNAME}:${USERNAME} build/desktop-configs/xfce4/ /home/${USERNAME}/.config/xfce4/
+COPY --chown=${USERNAME}:${USERNAME} build/pulse-config/ /home/${USERNAME}/.config/pulse/
 COPY --chown=${USERNAME}:${USERNAME} scripts/ /opt/scripts/
 RUN chmod +x /opt/scripts/*.sh
 
@@ -240,21 +278,26 @@ RUN mkdir -p /tmp/.X11-unix \
 ENV DISPLAY=:0 \
     XDG_RUNTIME_DIR=/var/run/user/${USER_ID} \
     PULSE_SERVER=unix:/tmp/pulse/native \
+    GSTREAMER_PATH=/opt/gstreamer \
     SELKIES_ENCODER=x264enc \
     SELKIES_ENABLE_RESIZE=true \
     SELKIES_ENABLE_AUDIO=true \
     SELKIES_ENABLE_BASIC_AUTH=false \
-    SELKIES_PORT=8080 \
-    SELKIES_METRICS_PORT=9090
+    SELKIES_PORT=8081 \
+    SELKIES_CONTROL_PORT=8082 \
+    SELKIES_METRICS_PORT=9081 \
+    NGINX_PORT=8080
 
 # Switch to non-root user
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}
 
 # Expose ports
-# 8080: Selkies web interface
-# 9090: Prometheus metrics
-EXPOSE 8080 9090
+# 8080: NGINX web interface (public access)
+# 8081: Selkies signaling server (internal, proxied by NGINX)
+# 8082: Selkies control plane API (internal)
+# 9081: Prometheus metrics (optional)
+EXPOSE 8080 8081 8082 9081
 
 # Entry point
 ENTRYPOINT ["/opt/scripts/entrypoint.sh"]
