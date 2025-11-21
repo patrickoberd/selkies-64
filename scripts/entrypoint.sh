@@ -146,9 +146,10 @@ export SELKIES_FRAMERATE=${SELKIES_FRAMERATE:-30}
 
 # Load TURN credentials if available (written by Coder agent)
 if [ -f /tmp/turn-config.json ]; then
-    export SELKIES_RTC_CONFIG_JSON=$(cat /tmp/turn-config.json)
+    SELKIES_RTC_CONFIG_JSON=$(cat /tmp/turn-config.json)
     echo "✓ Loaded TURN credentials from Coder agent"
 else
+    SELKIES_RTC_CONFIG_JSON='{"iceServers":[],"iceTransportPolicy":"all"}'
     echo "⚠ No TURN config found, using default STUN only"
 fi
 
@@ -186,7 +187,7 @@ fi
 # Start Selkies with proper binary and flags
 export SELKIES_PORT=8081
 export SELKIES_CONTROL_PORT=8082
-selkies-gstreamer \
+SELKIES_RTC_CONFIG_JSON="$SELKIES_RTC_CONFIG_JSON" selkies-gstreamer \
     --addr="localhost" \
     --port="8081" \
     --enable_basic_auth="false" \
