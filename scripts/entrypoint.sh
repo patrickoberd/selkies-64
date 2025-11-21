@@ -144,13 +144,22 @@ export SELKIES_AUDIO_BITRATE=${SELKIES_AUDIO_BITRATE:-128000}
 # Configure framerate
 export SELKIES_FRAMERATE=${SELKIES_FRAMERATE:-30}
 
+# Wait for TURN credentials from Coder agent (with timeout)
+echo "Waiting for TURN credentials from Coder agent..."
+TURN_CONFIG_TIMEOUT=30
+TURN_CONFIG_WAIT=0
+while [ ! -f /tmp/turn-config.json ] && [ $TURN_CONFIG_WAIT -lt $TURN_CONFIG_TIMEOUT ]; do
+    sleep 1
+    TURN_CONFIG_WAIT=$((TURN_CONFIG_WAIT + 1))
+done
+
 # Load TURN credentials if available (written by Coder agent)
 if [ -f /tmp/turn-config.json ]; then
     SELKIES_RTC_CONFIG_JSON=$(cat /tmp/turn-config.json)
     echo "✓ Loaded TURN credentials from Coder agent"
 else
     SELKIES_RTC_CONFIG_JSON='{"iceServers":[],"iceTransportPolicy":"all"}'
-    echo "⚠ No TURN config found, using default STUN only"
+    echo "⚠ TURN config not found after ${TURN_CONFIG_TIMEOUT}s, using default STUN only"
 fi
 
 # Verify Selkies is installed (check Python module)
