@@ -152,23 +152,55 @@ else
     echo "⚠ No TURN config found, using default STUN only"
 fi
 
-# Start Selkies via supervisord
-echo "Starting Selkies via supervisor..."
-/usr/bin/supervisord -c /etc/supervisor/supervisord.conf &
-SUPERVISOR_PID=$!
-echo "✓ Supervisor started (PID: $SUPERVISOR_PID)"
+# Verify Selkies is installed (check Python module)
+if ! python3 -c "import selkies_gstreamer" 2>/dev/null; then
+    echo "ERROR: selkies_gstreamer module not found!"
+    echo "Available Python packages:"
+    pip3 list | grep -i selkies
+    echo "Python path:"
+    python3 -c "import sys; print('\\n'.join(sys.path))"
+    exit 1
+fi
+echo "✓ selkies_gstreamer Python module found"
 
-# Wait for Selkies to be ready
-sleep 5
-echo "Waiting for Selkies to start..."
-timeout 30 bash -c 'until nc -z localhost 8081; do sleep 1; done'
-if [ $? -eq 0 ]; then
-    echo "✓ Selkies is ready on port 8081"
+# Start Selkies signaling server (internal port 8081)
+echo "Starting Selkies signaling server on port 8081..."
+
+# Source GStreamer environment (sets GST_PLUGIN_PATH, LD_LIBRARY_PATH, etc.)
+if [ -f /opt/gstreamer/gst-env ]; then
+    source /opt/gstreamer/gst-env
+    echo "✓ GStreamer environment sourced from /opt/gstreamer/gst-env"
+    echo "  GST_PLUGIN_PATH: $GST_PLUGIN_PATH"
 else
-    echo "⚠ Selkies startup timeout"
+    echo "WARNING: /opt/gstreamer/gst-env not found - GStreamer plugins may not load!"
 fi
 
-# Start NGINX (serves web interface on port 8080 and will proxy to Selkies on 8081)
+# Verify selkies-gstreamer binary exists
+if ! command -v selkies-gstreamer >/dev/null 2>&1; then
+    echo "ERROR: selkies-gstreamer binary not found in PATH!"
+    echo "Available Python packages:"
+    pip3 list | grep -i selkies
+    exit 1
+fi
+
+# Start Selkies with proper binary and flags
+export SELKIES_PORT=8081
+export SELKIES_CONTROL_PORT=8082
+selkies-gstreamer \
+    --addr="localhost" \
+    --port="8081" \
+    --enable_basic_auth="false" \
+    --enable_metrics_http="true" \
+    --metrics_http_port="9081" \
+    2>&1 | tee /tmp/selkies.log &
+
+SELKIES_PID=$!
+echo "Selkies PID: $SELKIES_PID"
+
+# Wait for Selkies signaling server to be ready (port 8081)
+wait_for_service "Selkies Signaling Server" 8081 60
+
+# Start NGINX (serves web interface on port 8080 and proxies to Selkies on 8081)
 echo "Starting NGINX web server on port 8080..."
 sudo /usr/sbin/nginx -g "daemon off;" 2>&1 | tee /tmp/nginx.log &
 NGINX_PID=$!
@@ -187,12 +219,14 @@ fi
 
 echo ""
 echo "=========================================="
-echo "✓ Desktop Environment is Ready!"
+echo "✓ Selkies Desktop Environment is Ready!"
 echo "=========================================="
+echo "Access the desktop at: http://localhost:8080"
 echo "Display: $DISPLAY @ $RESOLUTION"
-echo "XFCE Desktop: Running"
-echo "NGINX: Running on port 8080"
-echo "Note: Selkies will be started by Coder agent"
+echo "Video Encoder: $SELKIES_ENCODER"
+echo "Video Bitrate: $(($SELKIES_VIDEO_BITRATE / 1000000)) Mbps"
+echo "Audio Enabled: $SELKIES_ENABLE_AUDIO"
+echo "Architecture: NGINX (8080) → Selkies (8081)"
 echo "=========================================="
 echo ""
 
@@ -209,7 +243,11 @@ cleanup() {
         kill $NGINX_PID 2>/dev/null || true
     fi
 
-    # Note: Selkies is managed by Coder agent, not this script
+    # Kill Selkies
+    if [ -n "$SELKIES_PID" ]; then
+        echo "Stopping Selkies..."
+        kill $SELKIES_PID 2>/dev/null || true
+    fi
 
     # Kill XFCE
     if [ -n "$XFCE_PID" ]; then
@@ -231,6 +269,5 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT
 
-# Wait for NGINX process (main service)
-# Selkies is managed by Coder agent, not this entrypoint
-wait $NGINX_PID
+# Wait for Selkies process (keeps container alive)
+wait $SELKIES_PID
