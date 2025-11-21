@@ -152,7 +152,7 @@ FROM gstreamer AS selkies
 # Install Selkies-gstreamer from official releases (not from source!)
 # This provides the proper selkies-gstreamer binary and pre-compiled plugins
 WORKDIR /opt
-RUN echo "=== Installing Selkies from Official Releases ===" && \
+RUN echo "=== Installing Selkies from Official Release ===" && \
     SELKIES_VERSION=$(curl -fsSL https://api.github.com/repos/selkies-project/selkies-gstreamer/releases/latest | grep -Po '"tag_name": "v\K[^"]*') && \
     echo "Selkies version: ${SELKIES_VERSION}" && \
     \
