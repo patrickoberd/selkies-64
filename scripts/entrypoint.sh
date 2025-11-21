@@ -144,17 +144,29 @@ export SELKIES_AUDIO_BITRATE=${SELKIES_AUDIO_BITRATE:-128000}
 # Configure framerate
 export SELKIES_FRAMERATE=${SELKIES_FRAMERATE:-30}
 
-# Verify Selkies is installed (for Coder agent to use later)
-if ! python3 -c "import selkies_gstreamer" 2>/dev/null; then
-    echo "ERROR: selkies_gstreamer module not found!"
-    echo "Available Python packages:"
-    pip3 list | grep -i selkies
-    exit 1
+# Load TURN credentials if available (written by Coder agent)
+if [ -f /tmp/turn-config.json ]; then
+    export SELKIES_RTC_CONFIG_JSON=$(cat /tmp/turn-config.json)
+    echo "✓ Loaded TURN credentials from Coder agent"
+else
+    echo "⚠ No TURN config found, using default STUN only"
 fi
-echo "✓ selkies_gstreamer Python module found"
 
-# NOTE: Selkies will be started by Coder agent after fetching TURN credentials
-echo "Selkies startup delegated to Coder agent (for dynamic TURN credentials)"
+# Start Selkies via supervisord
+echo "Starting Selkies via supervisor..."
+/usr/bin/supervisord -c /etc/supervisor/supervisord.conf &
+SUPERVISOR_PID=$!
+echo "✓ Supervisor started (PID: $SUPERVISOR_PID)"
+
+# Wait for Selkies to be ready
+sleep 5
+echo "Waiting for Selkies to start..."
+timeout 30 bash -c 'until nc -z localhost 8081; do sleep 1; done'
+if [ $? -eq 0 ]; then
+    echo "✓ Selkies is ready on port 8081"
+else
+    echo "⚠ Selkies startup timeout"
+fi
 
 # Start NGINX (serves web interface on port 8080 and will proxy to Selkies on 8081)
 echo "Starting NGINX web server on port 8080..."
