@@ -193,7 +193,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy NGINX configuration for Selkies
+COPY build/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY build/nginx/default.conf /etc/nginx/sites-available/default
+
+# Create sites-enabled symlink and necessary directories
+# NGINX will run as 'coder' user, so set permissions accordingly
+RUN mkdir -p /etc/nginx/sites-enabled /var/log/nginx /tmp/nginx \
+    && ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 # ============================================================================
 # Stage 5: Development Tools (OPTIONAL - Commented out for faster testing)
@@ -270,7 +276,8 @@ COPY build/supervisor/ /etc/supervisor/conf.d/
 RUN mkdir -p /tmp/.X11-unix \
     && chmod 1777 /tmp/.X11-unix \
     && mkdir -p /var/log/supervisor \
-    && chown -R ${USERNAME}:${USERNAME} /var/log/supervisor
+    && chown -R ${USERNAME}:${USERNAME} /var/log/supervisor \
+    && chown -R ${USERNAME}:${USERNAME} /var/log/nginx /tmp/nginx
 
 # Environment variables for Selkies
 ENV DISPLAY=:0 \

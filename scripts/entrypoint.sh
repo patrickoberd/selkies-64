@@ -204,13 +204,23 @@ if ! command -v selkies-gstreamer >/dev/null 2>&1; then
     exit 1
 fi
 
-# Start Selkies with proper binary and flags (serves static files + WebSocket directly)
-# No NGINX needed - Selkies serves everything like websockify does in arch-i3
-export SELKIES_PORT=8080
+# Patch Selkies client WebSocket path for Coder compatibility
+# This changes WebSocket connection from /webrtc/signalling/ to / (root path)
+echo "Patching Selkies WebSocket path for Coder compatibility..."
+if [ -f /opt/scripts/patch-websocket-path.sh ]; then
+    bash /opt/scripts/patch-websocket-path.sh
+else
+    echo "⚠ WARNING: patch-websocket-path.sh not found, WebSocket may not work with Coder!"
+fi
+
+# Start Selkies signaling server on INTERNAL port 8081
+# NGINX will proxy from port 8080 → Selkies 8081 with path rewriting
+echo "Starting Selkies signaling server on INTERNAL port 8081..."
+export SELKIES_PORT=8081
 export SELKIES_CONTROL_PORT=8082
 SELKIES_RTC_CONFIG_JSON="$SELKIES_RTC_CONFIG_JSON" selkies-gstreamer \
     --addr="localhost" \
-    --port="8080" \
+    --port="8081" \
     --web_root="/opt/gst-web" \
     --enable_basic_auth="false" \
     --enable_metrics_http="true" \
@@ -220,8 +230,18 @@ SELKIES_RTC_CONFIG_JSON="$SELKIES_RTC_CONFIG_JSON" selkies-gstreamer \
 SELKIES_PID=$!
 echo "Selkies PID: $SELKIES_PID"
 
-# Wait for Selkies web server to be ready (port 8080)
-wait_for_service "Selkies Web Server" 8080 60
+# Wait for Selkies to be ready on internal port 8081
+wait_for_service "Selkies Signaling Server" 8081 60
+
+# Start NGINX on EXTERNAL port 8080 (exposed to Coder)
+# NGINX rewrites root path WebSocket → /webrtc/signalling/ for Selkies
+echo "Starting NGINX on EXTERNAL port 8080..."
+nginx -c /etc/nginx/nginx.conf 2>&1 | tee /tmp/nginx.log &
+NGINX_PID=$!
+echo "NGINX PID: $NGINX_PID"
+
+# Wait for NGINX to be ready on external port 8080
+wait_for_service "NGINX Web Server" 8080 60
 
 # If running with Coder agent, download and start it now
 if [ -n "$CODER_AGENT_TOKEN" ]; then
@@ -262,7 +282,9 @@ echo "Display: $DISPLAY @ $RESOLUTION"
 echo "Video Encoder: $SELKIES_ENCODER"
 echo "Video Bitrate: $(($SELKIES_VIDEO_BITRATE / 1000000)) Mbps"
 echo "Audio Enabled: $SELKIES_ENABLE_AUDIO"
-echo "Architecture: Direct (Selkies serves on port 8080)"
+echo "Architecture: NGINX (8080) → Selkies (8081) with WebSocket path rewriting"
+echo "  Browser connects to: /"
+echo "  NGINX rewrites to: /webrtc/signalling/"
 echo "=========================================="
 echo ""
 
@@ -277,6 +299,12 @@ cleanup() {
     if [ -n "$CODER_PID" ]; then
         echo "Stopping Coder agent..."
         kill $CODER_PID 2>/dev/null || true
+    fi
+
+    # Stop NGINX
+    if [ -n "$NGINX_PID" ]; then
+        echo "Stopping NGINX..."
+        kill $NGINX_PID 2>/dev/null || true
     fi
 
     # Kill Selkies
