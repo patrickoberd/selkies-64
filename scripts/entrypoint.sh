@@ -74,6 +74,10 @@ if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
     echo "D-Bus session started: $DBUS_SESSION_BUS_ADDRESS"
 fi
 
+# Clean up stale X11 lock files (from previous container runs)
+echo "Cleaning up stale X11 lock files..."
+rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null || true
+
 # Start X11 virtual display
 echo "Starting X11 virtual display on $DISPLAY..."
 Xvfb $DISPLAY \
@@ -236,6 +240,11 @@ wait_for_service "Selkies Signaling Server" 8081 60
 # Start NGINX on EXTERNAL port 8080 (exposed to Coder)
 # NGINX rewrites root path WebSocket → /webrtc/signalling/ for Selkies
 echo "Starting NGINX on EXTERNAL port 8080..."
+
+# Ensure NGINX directories exist with correct permissions
+sudo mkdir -p /var/log/nginx /tmp/nginx
+sudo chown -R $(id -u):$(id -g) /var/log/nginx /tmp/nginx
+
 nginx -c /etc/nginx/nginx.conf 2>&1 | tee /tmp/nginx.log &
 NGINX_PID=$!
 echo "NGINX PID: $NGINX_PID"
