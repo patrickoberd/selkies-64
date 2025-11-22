@@ -204,12 +204,14 @@ if ! command -v selkies-gstreamer >/dev/null 2>&1; then
     exit 1
 fi
 
-# Start Selkies with proper binary and flags
-export SELKIES_PORT=8081
+# Start Selkies with proper binary and flags (serves static files + WebSocket directly)
+# No NGINX needed - Selkies serves everything like websockify does in arch-i3
+export SELKIES_PORT=8080
 export SELKIES_CONTROL_PORT=8082
 SELKIES_RTC_CONFIG_JSON="$SELKIES_RTC_CONFIG_JSON" selkies-gstreamer \
     --addr="localhost" \
-    --port="8081" \
+    --port="8080" \
+    --web_root="/opt/gst-web" \
     --enable_basic_auth="false" \
     --enable_metrics_http="true" \
     --metrics_http_port="9081" \
@@ -218,17 +220,8 @@ SELKIES_RTC_CONFIG_JSON="$SELKIES_RTC_CONFIG_JSON" selkies-gstreamer \
 SELKIES_PID=$!
 echo "Selkies PID: $SELKIES_PID"
 
-# Wait for Selkies signaling server to be ready (port 8081)
-wait_for_service "Selkies Signaling Server" 8081 60
-
-# Start NGINX (serves web interface on port 8080 and proxies to Selkies on 8081)
-echo "Starting NGINX web server on port 8080..."
-sudo /usr/sbin/nginx -g "daemon off;" 2>&1 | tee /tmp/nginx.log &
-NGINX_PID=$!
-echo "NGINX PID: $NGINX_PID"
-
-# Wait for NGINX to be ready
-wait_for_service "NGINX Web Interface" 8080 30
+# Wait for Selkies web server to be ready (port 8080)
+wait_for_service "Selkies Web Server" 8080 60
 
 # If running with Coder agent, download and start it now
 if [ -n "$CODER_AGENT_TOKEN" ]; then
@@ -269,7 +262,7 @@ echo "Display: $DISPLAY @ $RESOLUTION"
 echo "Video Encoder: $SELKIES_ENCODER"
 echo "Video Bitrate: $(($SELKIES_VIDEO_BITRATE / 1000000)) Mbps"
 echo "Audio Enabled: $SELKIES_ENABLE_AUDIO"
-echo "Architecture: NGINX (8080) → Selkies (8081)"
+echo "Architecture: Direct (Selkies serves on port 8080)"
 echo "=========================================="
 echo ""
 
@@ -284,12 +277,6 @@ cleanup() {
     if [ -n "$CODER_PID" ]; then
         echo "Stopping Coder agent..."
         kill $CODER_PID 2>/dev/null || true
-    fi
-
-    # Kill NGINX
-    if [ -n "$NGINX_PID" ]; then
-        echo "Stopping NGINX..."
-        kill $NGINX_PID 2>/dev/null || true
     fi
 
     # Kill Selkies
