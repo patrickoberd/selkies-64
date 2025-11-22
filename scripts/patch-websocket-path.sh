@@ -7,26 +7,29 @@ set -e
 
 echo "Patching Selkies WebSocket path for Coder compatibility..."
 
-# Backup original file
-if [ ! -f /opt/gst-web/app.js.original ]; then
-    cp /opt/gst-web/app.js /opt/gst-web/app.js.original
-    echo "✓ Backed up original app.js"
-fi
+# Copy app.js to /tmp for patching (avoid permission issues in /opt/gst-web)
+sudo cp /opt/gst-web/app.js /tmp/app.js.original
+sudo cp /opt/gst-web/app.js /tmp/app.js
+echo "✓ Copied app.js to /tmp for patching"
 
 # Patch WebSocket URL construction to use root path instead of /webrtc/signalling/
 # Original: protocol + window.location.host + "/" + app.appName + "/signalling/"
 # Patched:  protocol + window.location.host + "/"
-sed -i 's|protocol + window.location.host + "/" + app.appName + "/signalling/"|protocol + window.location.host + "/"|g' /opt/gst-web/app.js
+sed -i 's|protocol + window.location.host + "/" + app.appName + "/signalling/"|protocol + window.location.host + "/"|g' /tmp/app.js
 
 # Verify patch was applied
-if grep -q 'protocol + window.location.host + "/"' /opt/gst-web/app.js && \
-   ! grep -q 'protocol + window.location.host + "/" + app.appName + "/signalling/"' /opt/gst-web/app.js; then
+if grep -q 'protocol + window.location.host + "/"' /tmp/app.js && \
+   ! grep -q 'protocol + window.location.host + "/" + app.appName + "/signalling/"' /tmp/app.js; then
     echo "✓ Successfully patched WebSocket path to root /"
+
+    # Copy patched file back to /opt/gst-web
+    sudo cp /tmp/app.js /opt/gst-web/app.js
+    echo "✓ Deployed patched app.js"
     echo "  WebSocket will now connect to: wss://HOST/"
     echo "  NGINX will rewrite this to: http://localhost:8081/webrtc/signalling/"
 else
     echo "⚠ WARNING: Patch may not have been applied correctly"
     echo "  Showing current WebSocket URL construction:"
-    grep "new WebRTCDemoSignalling" /opt/gst-web/app.js
+    grep "new WebRTCDemoSignalling" /tmp/app.js
     exit 1
 fi
